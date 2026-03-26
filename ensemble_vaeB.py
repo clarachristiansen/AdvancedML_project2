@@ -17,7 +17,6 @@ import math
 import matplotlib.pyplot as plt
 import torch.optim as optim
 
-
 class PLcurve:
     def __init__(self, x0, x1, N):
         """
@@ -42,8 +41,6 @@ class PLcurve:
         c = self.points().detach().numpy()
         plt.plot(c[:, 0], c[:, 1], label=name)
 
-
-
 class GaussianPrior(nn.Module):
     def __init__(self, M):
         """
@@ -66,7 +63,6 @@ class GaussianPrior(nn.Module):
         prior: [torch.distributions.Distribution]
         """
         return td.Independent(td.Normal(loc=self.mean, scale=self.std), 1)
-
 
 class GaussianEncoder(nn.Module):
     def __init__(self, encoder_net):
@@ -96,7 +92,6 @@ class GaussianEncoder(nn.Module):
     def mean(self, x):
         out, _ = torch.chunk(self.encoder_net(x), 2, dim=-1)
         return out
-
 
 class GaussianDecoder(nn.Module):
     def __init__(self, decoder_net):
@@ -131,13 +126,12 @@ class GaussianDecoder(nn.Module):
             out = self.decoder_net(z)                # (B, ...)
             return out.reshape(out.shape[0], -1)
 
-
-class VAE(nn.Module):
+class EnsembleVAE(nn.Module):
     """
     Define a Variational Autoencoder (VAE) model.
     """
 
-    def __init__(self, prior, decoder, encoder):
+    def __init__(self, prior, decoder_list, encoder):
         """
         Parameters:
         prior: [torch.nn.Module]
@@ -148,9 +142,9 @@ class VAE(nn.Module):
                 The encoder distribution over the latent space.
         """
 
-        super(VAE, self).__init__()
+        super(EnsembleVAE, self).__init__()
         self.prior = prior
-        self.decoder = decoder
+        self.decoders = nn.ModuleList(decoder_list)
         self.encoder = encoder
 
     def elbo(self, x):
@@ -629,13 +623,3 @@ if __name__ == "__main__":
 
         plt.axis((-r, r, -r, r))
         plt.show()
-
-
-
-
-        #plt.show()
-
-
-
-
-
