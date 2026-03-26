@@ -16,6 +16,7 @@ import os
 import math
 import matplotlib.pyplot as plt
 import torch.optim as optim
+import pandas as pd
 
 
 class PLcurve:
@@ -429,6 +430,7 @@ if __name__ == "__main__":
         #J = decoder_jacobian(decoder, z)
         #return J.T @ J
         J = decoder_jacobian(decoder, z)
+        print(f'J:{J.shape}')
         return (J ** 2).sum(dim=(1, 2))  # (P,)
     
     def plot_metric(decoder, grid):
@@ -444,7 +446,8 @@ if __name__ == "__main__":
         #         print(f"{i}/{len(XY)}")
         #     Gs.append(metric(x))
 
-        trG = pullback_metric_trace(decoder, XY)
+        trG = pullback_metric(decoder, XY).sum(dim=(1, 2))
+        print(trG.shape)
 
         # G = torch.stack(Gs, dim=0)
         # trG = G[:, 0, 0] + G[:, 1, 1]
@@ -611,8 +614,12 @@ if __name__ == "__main__":
         ## HERE
         G = lambda x: pullback_metric(model.decoder,x)
         T = 20
-        for _ in range(10):
+
+        all_idx = []
+  
+        for _ in range(1):
             idx = torch.randint(z.shape[0], (2,))
+            all_idx.append(idx)
             c = PLcurve(z[idx[0]], z[idx[1]], T)
             e0 = curve_energy(G, c.points()).item()
             print(f"Energy before optimization is {e0:.2f}")
@@ -626,6 +633,9 @@ if __name__ == "__main__":
             line = torch.linspace(0, 1, T).unsqueeze(1) * c.x1 + (1-torch.linspace(0,1,T).unsqueeze(1)) * c.x0
             dev = torch.norm(c.points().detach().cpu() - line.detach().cpu(), dim=1).max().item()
             print(f"max deviation: {dev:.3f}")
+
+        # Save indices to csv
+        pd.DataFrame(all_idx).to_csv('all_idx.csv', header=False)
 
         plt.axis((-r, r, -r, r))
         plt.show()
