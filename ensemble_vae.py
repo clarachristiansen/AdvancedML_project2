@@ -589,8 +589,9 @@ if __name__ == "__main__":
 
 
         r=10
+        N = 100
         #plot_metric(G, torch.linspace(-r, r, 20, device=device))
-        plot_metric(model.decoder, torch.linspace(-r, r, 20, device=device))
+        plot_metric(model.decoder, torch.linspace(-r, r, 100, device=device))
         #plot_metric_fast(model.decoder, torch.linspace(-r, r, 100))
         # test encoder mean
         all_z = []
@@ -613,17 +614,18 @@ if __name__ == "__main__":
         for _ in range(10):
             idx = torch.randint(z.shape[0], (2,))
             c = PLcurve(z[idx[0]], z[idx[1]], T)
-
-            print("Energy before optimization is {}".format(
-                curve_energy(G, c.points()).item()
-            ))
+            e0 = curve_energy(G, c.points()).item()
+            print(f"Energy before optimization is {e0:.2f}")
 
             connecting_geodesic(G, c)
-
-            print("Energy after optimization is {}".format(
-                curve_energy(G, c.points()).item()
-            ))
+            
+            e1 = curve_energy(G, c.points()).item()
+            print(f"Energy after optimization is {e1:.2f}")
             c.plot('After')
+            print(f"drop: {(e0-e1)/max(e0,1e-12):.2%}")
+            line = torch.linspace(0, 1, T).unsqueeze(1) * c.x1 + (1-torch.linspace(0,1,T).unsqueeze(1)) * c.x0
+            dev = torch.norm(c.points().detach().cpu() - line.detach().cpu(), dim=1).max().item()
+            print(f"max deviation: {dev:.3f}")
 
         plt.axis((-r, r, -r, r))
         plt.show()
