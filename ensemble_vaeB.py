@@ -159,9 +159,14 @@ class EnsembleVAE(nn.Module):
         """
         q = self.encoder(x)
         z = q.rsample()
-
+        decoder_batch = int(z.shape[0] / 3)
+        
+        log_probs = []
+        for i, decoder in enumerate(self.decoders):
+            log_probs += [decoder(z[i*decoder_batch : (i+1)*decoder_batch,:]).log_prob(x[i*decoder_batch : (i+1)*decoder_batch, :])]
+        log_probs = torch.concat(log_probs)
         elbo = torch.mean(
-            self.decoder(z).log_prob(x) - q.log_prob(z) + self.prior().log_prob(z)
+            log_probs - q.log_prob(z) + self.prior().log_prob(z)
         )
         return elbo
 
@@ -277,7 +282,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--batch-size",
         type=int,
-        default=32,
+        default=60,
         metavar="N",
         help="batch size for training (default: %(default)s)",
     )
@@ -501,18 +506,17 @@ if __name__ == "__main__":
             opt.zero_grad()
             opt.step(closure)
 
-
+    model = EnsembleVAE(
+            GaussianPrior(M),
+            [GaussianDecoder(new_decoder()), GaussianDecoder(new_decoder()), GaussianDecoder(new_decoder())],
+            GaussianEncoder(new_encoder()),
+        ).to(device)
 
     # Choose mode to run
     if args.mode == "train":
-
         experiments_folder = args.experiment_folder
         os.makedirs(f"{experiments_folder}", exist_ok=True)
-        model = VAE(
-            GaussianPrior(M),
-            GaussianDecoder(new_decoder()),
-            GaussianEncoder(new_encoder()),
-        ).to(device)
+        
         optimizer = torch.optim.Adam(model.parameters(), lr=1e-3)
         train(
             model,
@@ -525,15 +529,10 @@ if __name__ == "__main__":
 
         torch.save(
             model.state_dict(),
-            f"{experiments_folder}/model.pt",
+            f"{experiments_folder}/model_{args.N}.pt",
         )
 
     elif args.mode == "sample":
-        model = VAE(
-            GaussianPrior(M),
-            GaussianDecoder(new_decoder()),
-            GaussianEncoder(new_encoder()),
-        ).to(device)
         model.load_state_dict(torch.load(args.experiment_folder + "/model.pt"))
         model.eval()
 
@@ -549,11 +548,6 @@ if __name__ == "__main__":
 
     elif args.mode == "eval":
         # Load trained model
-        model = VAE(
-            GaussianPrior(M),
-            GaussianDecoder(new_decoder()),
-            GaussianEncoder(new_encoder()),
-        ).to(device)
         model.load_state_dict(torch.load(args.experiment_folder + "/model.pt"))
         model.eval()
 
@@ -567,12 +561,6 @@ if __name__ == "__main__":
         print("Print mean test elbo:", mean_elbo)
 
     elif args.mode == "geodesics":
-
-        model = VAE(
-            GaussianPrior(M),
-            GaussianDecoder(new_decoder()),
-            GaussianEncoder(new_encoder()),
-        ).to(device)
         model.load_state_dict(torch.load(args.experiment_folder + "/model.pt"))
         model.eval()
         z = torch.tensor([0.0, 0.0], device=device)
