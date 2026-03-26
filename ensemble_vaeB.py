@@ -435,20 +435,7 @@ if __name__ == "__main__":
         XY = torch.cat((X.reshape(-1, 1), Y.reshape(-1, 1)), dim=1)
         print(XY.shape)
         
-        # SLOW VERSION
-        # uses input arguments metric, grid
-        # Gs = []
-        # for i, x in enumerate(XY):
-        #     if i % 20 == 0:
-        #         print(f"{i}/{len(XY)}")
-        #     Gs.append(metric(x))
-
-        trG = pullback_metric_trace(decoder, XY)
-
-        # G = torch.stack(Gs, dim=0)
-        # trG = G[:, 0, 0] + G[:, 1, 1]
-
-
+        trG = pullback_metric(decoder, XY).sum(dim=(1, 2))
 
         plt.imshow(
             trG.reshape(X.shape).detach().cpu().numpy().T,
@@ -529,7 +516,7 @@ if __name__ == "__main__":
 
         torch.save(
             model.state_dict(),
-            f"{experiments_folder}/model_{args.N}.pt",
+            f"{experiments_folder}/model_{args.num_reruns}.pt",
         )
 
     elif args.mode == "sample":
@@ -561,19 +548,13 @@ if __name__ == "__main__":
         print("Print mean test elbo:", mean_elbo)
 
     elif args.mode == "geodesics":
-        model.load_state_dict(torch.load(args.experiment_folder + "/model.pt"))
+        model.load_state_dict(torch.load(args.experiment_folder + "/model_10.pt"))
         model.eval()
-        z = torch.tensor([0.0, 0.0], device=device)
-        out = model.decoder.mean(z)
-        print(out.shape) # should be torch.Size([784])
-        J = torch.autograd.functional.jacobian(model.decoder.mean, z)
-        print(J.shape) # should be torch.Size([784, 2])
-
 
         r=10
         N = 100
         #plot_metric(G, torch.linspace(-r, r, 20, device=device))
-        plot_metric(model.decoder, torch.linspace(-r, r, 100, device=device))
+        plot_metric(model.decoders, torch.linspace(-r, r, 100, device=device))
         #plot_metric_fast(model.decoder, torch.linspace(-r, r, 100))
         # test encoder mean
         all_z = []
