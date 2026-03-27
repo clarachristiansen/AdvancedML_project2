@@ -275,7 +275,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device",
         type=str,
-        default="mps",
+        default="cuda",
         choices=["cpu", "cuda", "mps"],
         help="torch device (default: %(default)s)",
     )
