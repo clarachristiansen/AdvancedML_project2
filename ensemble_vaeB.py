@@ -406,19 +406,22 @@ if __name__ == "__main__":
         return decoder_net
     
     ### PART A funcitions
-    def decoder_jacobian(decoder, z):
+    def decoder_jacobian(decoders, z):
         #z = z.detach().clone().requires_grad_(True)
         #return torch.autograd.functional.jacobian(decoder.mean, z) 
         def f_single(z):
-            return decoder.mean(z)  # shape (784,)
+            full_mean = []
+            for decoder in decoders:
+                full_mean += [decoder.mean(z)]
+            return torch.mean(torch.stack(full_mean), axis=(0)) # shape (784,)
 
         # batched Jacobian: (P, 784, 2)
         J = vmap(jacfwd(f_single))(z)
         return J
 
     
-    def pullback_metric(decoder, z):
-        J = decoder_jacobian(decoder, z)
+    def pullback_metric(decoders, z):
+        J = decoder_jacobian(decoders, z)
         if z.dim() == 1:
             return J.T @ J                            # (2,2)
         return J.transpose(-1, -2) @ J               # (P,2,2)
@@ -430,12 +433,12 @@ if __name__ == "__main__":
         J = decoder_jacobian(decoder, z)
         return (J ** 2).sum(dim=(1, 2))  # (P,)
     
-    def plot_metric(decoder, grid):
+    def plot_metric(decoders, grid):
         X, Y = torch.meshgrid(grid, grid, indexing="ij")
         XY = torch.cat((X.reshape(-1, 1), Y.reshape(-1, 1)), dim=1)
         print(XY.shape)
         
-        trG = pullback_metric(decoder, XY).sum(dim=(1, 2))
+        trG = pullback_metric(decoders, XY).sum(dim=(1, 2))
 
         plt.imshow(
             trG.reshape(X.shape).detach().cpu().numpy().T,
@@ -570,9 +573,8 @@ if __name__ == "__main__":
         labels = torch.cat(all_y, dim=0)  # (N,)
         #plt.scatter(z[:, 0], z[:, 1], s=1, c=labels)
         plt.scatter(z[:, 0], z[:, 1], s=1) # without labels - better?
-
+        plt.show()
         ## HERE
-        G = lambda x: pullback_metric(model.decoder,x)
         T = 20
         for _ in range(10):
             idx = torch.randint(z.shape[0], (2,))
@@ -592,3 +594,6 @@ if __name__ == "__main__":
 
         plt.axis((-r, r, -r, r))
         plt.show()
+
+        ## 1. Check functioner.
+        ## 3. Usikkerhed i stedet for manifold.
