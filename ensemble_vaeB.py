@@ -18,7 +18,6 @@ import matplotlib.pyplot as plt
 import torch.optim as optim
 from torch.func import vmap, jacfwd
 
-
 class PLcurve:
     def __init__(self, x0, x1, N):
         """
@@ -168,7 +167,7 @@ class EnsembleVAE(nn.Module):
             log_probs += [decoder(z[i*decoder_batch : (i+1)*decoder_batch,:]).log_prob(x[i*decoder_batch : (i+1)*decoder_batch, :])]
         log_probs = torch.concat(log_probs)
         elbo = torch.mean(
-            log_probs - q.log_prob(z) + self.prior().log_prob(z)
+            log_probs - q.log_prob(z) + self.prior().log_prob(z) ##Mby split kl divergence
         )
         return elbo
 
@@ -192,7 +191,6 @@ class EnsembleVAE(nn.Module):
            A tensor of dimension `(batch_size, feature_dim1, feature_dim2)`
         """
         return -self.elbo(x)
-
 
 def train(model, optimizer, data_loader, epochs, device):
     """
@@ -245,6 +243,73 @@ def train(model, optimizer, data_loader, epochs, device):
                 )
                 break
 
+### PART A funcitions
+def decoder_jacobian(decoders, z):
+    #z = z.detach().clone().requires_grad_(True)
+    #return torch.autograd.functional.jacobian(decoder.mean, z) 
+    def f_single(z):
+        full_mean = []
+        for decoder in decoders:
+            full_mean += [decoder.mean(z)]
+        return torch.mean(torch.stack(full_mean), axis=(0)) # shape (784,)
+
+    # batched Jacobian: (P, 784, 2)
+    J = vmap(jacfwd(f_single))(z)
+    return J
+
+def pullback_metric(decoders, z):
+    J = decoder_jacobian(decoders, z)
+    if z.dim() == 1:
+        return J.T @ J                            # (2,2)
+    return J.transpose(-1, -2) @ J               # (P,2,2)
+
+def plot_metric(decoders, grid):
+    X, Y = torch.meshgrid(grid, grid, indexing="ij")
+    XY = torch.cat((X.reshape(-1, 1), Y.reshape(-1, 1)), dim=1) # (P,2)
+    
+    means = [decoder.mean(XY) for decoder in decoders]
+    std_per_pixel = torch.std(torch.stack(means), dim=0) # (P,784)
+    uncertainty = torch.mean(std_per_pixel, axis=1)
+
+    plt.imshow(
+        uncertainty.reshape(X.shape).detach().cpu().numpy().T,
+        extent=(grid[0].item(), grid[-1].item(), grid[0].item(), grid[-1].item()),
+        origin="lower"
+    )
+    plt.colorbar()
+    plt.savefig('test.png')
+
+def curve_energy(decoders, curve, monte_runs=20):
+    num_decoder = len(decoders)
+    energy = 0.0
+
+    for i in range(curve.N - 1):
+        zi = curve.points()[i:i+1]
+        zj = curve.points()[i+1:i+2]
+        sum = 0.0
+        for _ in range(monte_runs):
+            l = torch.randint(0, num_decoder, (1,)).item()
+            k = torch.randint(0, num_decoder, (1,)).item()
+
+            fl = decoders[l].mean(zi)
+            fk = decoders[k].mean(zj)
+
+            sum += torch.sum((fl - fk)**2)
+        energy += sum/monte_runs
+    return energy
+
+def connecting_geodesic(decoders, curve, steps=200, lr=1e-2):
+    opt = optim.Adam([curve.params], lr=lr)
+
+    for _ in range(steps):
+        opt.zero_grad()
+        loss = curve_energy(decoders, curve)
+        loss.backward()
+        opt.step()
+
+    return curve
+
+
 
 if __name__ == "__main__":
     from torchvision import datasets, transforms
@@ -264,7 +329,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--experiment-folder",
         type=str,
-        default="experiment",
+        default="AdvancedML_project2/experiment",
         help="folder to save and load experiment results in (default: %(default)s)",
     )
     parser.add_argument(
@@ -277,7 +342,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--device",
         type=str,
-        default="cuda",
+        default="cpu",
         choices=["cpu", "cuda", "mps"],
         help="torch device (default: %(default)s)",
     )
@@ -291,7 +356,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--epochs-per-decoder",
         type=int,
-        default=50,
+        default=80,
         metavar="N",
         help="number of training epochs per each decoder (default: %(default)s)",
     )
@@ -319,22 +384,22 @@ if __name__ == "__main__":
     parser.add_argument(
         "--num-curves",
         type=int,
-        default=10,
+        default=25,
         metavar="N",
         help="number of geodesics to plot (default: %(default)s)",
     )
     parser.add_argument(
         "--num-t",  # number of points along the curve
         type=int,
-        default=20,
+        default=100,
         metavar="N",
         help="number of points along the curve (default: %(default)s)",
     )
 
     args = parser.parse_args()
-    print("# Options")
-    for key, value in sorted(vars(args).items()):
-        print(key, "=", value)
+    # print("# Options")
+    # for key, value in sorted(vars(args).items()):
+    #     print(key, "=", value)
 
     device = args.device
 
@@ -407,76 +472,6 @@ if __name__ == "__main__":
         )
         return decoder_net
     
-    ### PART A funcitions
-    def decoder_jacobian(decoders, z):
-        #z = z.detach().clone().requires_grad_(True)
-        #return torch.autograd.functional.jacobian(decoder.mean, z) 
-        def f_single(z):
-            full_mean = []
-            for decoder in decoders:
-                full_mean += [decoder.mean(z)]
-            return torch.mean(torch.stack(full_mean), axis=(0)) # shape (784,)
-
-        # batched Jacobian: (P, 784, 2)
-        J = vmap(jacfwd(f_single))(z)
-        return J
-
-    def pullback_metric(decoders, z):
-        J = decoder_jacobian(decoders, z)
-        if z.dim() == 1:
-            return J.T @ J                            # (2,2)
-        return J.transpose(-1, -2) @ J               # (P,2,2)
-    
-    def plot_metric(decoders, grid):
-        X, Y = torch.meshgrid(grid, grid, indexing="ij")
-        XY = torch.cat((X.reshape(-1, 1), Y.reshape(-1, 1)), dim=1) # (P,2)
-        
-        means = [decoder.mean(XY) for decoder in decoders]
-        std_per_pixel = torch.std(torch.stack(means), dim=0) # (P,784)
-        uncertainty = torch.mean(std_per_pixel, axis=1)
-
-        plt.imshow(
-            uncertainty.reshape(X.shape).detach().cpu().numpy().T,
-            extent=(grid[0].item(), grid[-1].item(), grid[0].item(), grid[-1].item()),
-            origin="lower"
-        )
-        plt.colorbar()
-        plt.savefig('test.png')
-
-    def curve_energy(decoders, curve, n_mc=20):
-        # Vectorizee the sum
-        z0 = curve[:-1]   # (N-1, 2)
-        z1 = curve[1:]    # (N-1, 2)
-
-        K = len(decoders)
-        energy = 0.0
-
-        for _ in range(n_mc):
-            l = torch.randint(K, (1,)).item()
-            k = torch.randint(K, (1,)).item()
-
-            f_l = decoders[l].mean(z0)   # (N-1, 784)
-            f_k = decoders[k].mean(z1)   # (N-1, 784)
-
-            seg_energy = ((f_l - f_k) ** 2).sum(dim=1)   # (N-1,)
-            energy = energy + seg_energy.sum()
-        mc_energy = energy / n_mc
-        return mc_energy
-
-    def connecting_geodesic(decoders, curve):
-        opt = optim.LBFGS([curve.params], lr=0.5)
-
-        def closure():
-            opt.zero_grad()
-            energy = curve_energy(decoders, curve.points())
-            energy.backward()
-            return energy
-
-        max_iter = 1000
-        for _ in range(max_iter):
-            opt.zero_grad()
-            opt.step(closure)
-
     model = EnsembleVAE(
             GaussianPrior(M),
             [GaussianDecoder(new_decoder()), GaussianDecoder(new_decoder()), GaussianDecoder(new_decoder())],
@@ -532,13 +527,14 @@ if __name__ == "__main__":
         print("Print mean test elbo:", mean_elbo)
 
     elif args.mode == "geodesics":
-        model.load_state_dict(torch.load(args.experiment_folder + "/model_0.pt"))
+        experiments_folder = args.experiment_folder
+        model.load_state_dict(torch.load(args.experiment_folder + "/model_10.pt",weights_only=True))
         model.eval()
 
-        r=100
+        dimss=10
         N = 100
         #plot_metric(G, torch.linspace(-r, r, 20, device=device))
-        plot_metric(model.decoders, torch.linspace(-r, r, 100, device=device))
+        plot_metric(model.decoders, torch.linspace(-dimss, dimss, 100, device=device))
         #plot_metric_fast(model.decoder, torch.linspace(-r, r, 100))
         # test encoder mean
         all_z = []
@@ -555,18 +551,18 @@ if __name__ == "__main__":
         plt.scatter(z[:, 0], z[:, 1], s=1, c=labels)
         #plt.scatter(z[:, 0], z[:, 1], s=1) # without labels - better?
         #plt.show()
-        plt.savefig('test.png')
+        plt.savefig(f'{experiments_folder}test.png')
         ## HERE
         T = 20
-        for _ in range(1):
+        for _ in range(args.num_curves):
             idx = torch.randint(z.shape[0], (2,))
             c = PLcurve(z[idx[0]], z[idx[1]], T)
-            e0 = curve_energy(model.decoders, c.points()).item()
+            e0 = curve_energy(model.decoders, c).item()
             print(f"Energy before optimization is {e0:.2f}")
 
             connecting_geodesic(model.decoders, c)
             
-            e1 = curve_energy(model.decoders, c.points()).item()
+            e1 = curve_energy(model.decoders, c).item()
             print(f"Energy after optimization is {e1:.2f}")
             c.plot('After')
             print(f"drop: {(e0-e1)/max(e0,1e-12):.2%}")
@@ -574,11 +570,11 @@ if __name__ == "__main__":
             dev = torch.norm(c.points().detach().cpu() - line.detach().cpu(), dim=1).max().item()
             print(f"max deviation: {dev:.3f}")
 
-        plt.axis((-r, r, -r, r))
+        plt.axis((-dimss, dimss, -dimss, dimss))
         plt.title('Latent Space: Uncertainty and Geodesics')
         plt.legend()
         plt.tight_layout()
-        plt.savefig('results/latent_plot.png')
+        plt.savefig(f'{experiments_folder}/latent_plot.png')
         plt.show()
 
         ## 1. Check functioner.
