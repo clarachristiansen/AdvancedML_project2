@@ -17,6 +17,8 @@ import math
 import matplotlib.pyplot as plt
 import torch.optim as optim
 import pandas as pd
+from torch.func import vmap, jacfwd
+
 
 
 class PLcurve:
@@ -39,9 +41,9 @@ class PLcurve:
         c = torch.concatenate((self.x0, self.params, self.x1), axis=0)  # NxD
         return c
 
-    def plot(self, name):
+    def plot(self):
         c = self.points().detach().numpy()
-        plt.plot(c[:, 0], c[:, 1], label=name)
+        plt.plot(c[:, 0], c[:, 1])
 
 
 
@@ -409,13 +411,14 @@ if __name__ == "__main__":
     
     ### PART A funcitions
     def decoder_jacobian(decoder, z):
+        #slower
         #z = z.detach().clone().requires_grad_(True)
         #return torch.autograd.functional.jacobian(decoder.mean, z) 
-        def f_single(z):
-            return decoder.mean(z)  # shape (784,)
 
-        # batched Jacobian: (P, 784, 2)
-        J = vmap(jacfwd(f_single))(z)
+        def f_single(z):
+            return decoder.mean(z)  # (784,)
+
+        J = vmap(jacfwd(f_single))(z) # (P, 784, 2)
         return J
 
     
@@ -425,68 +428,21 @@ if __name__ == "__main__":
             return J.T @ J                            # (2,2)
         return J.transpose(-1, -2) @ J               # (P,2,2)
     
-    def pullback_metric_trace(decoder, z):
-        # SLOW VERSION
-        #J = decoder_jacobian(decoder, z)
-        #return J.T @ J
-        J = decoder_jacobian(decoder, z)
-        print(f'J:{J.shape}')
-        return (J ** 2).sum(dim=(1, 2))  # (P,)
-    
     def plot_metric(decoder, grid):
         X, Y = torch.meshgrid(grid, grid, indexing="ij")
         XY = torch.cat((X.reshape(-1, 1), Y.reshape(-1, 1)), dim=1)
         print(XY.shape)
         
-        # SLOW VERSION
-        # uses input arguments metric, grid
-        # Gs = []
-        # for i, x in enumerate(XY):
-        #     if i % 20 == 0:
-        #         print(f"{i}/{len(XY)}")
-        #     Gs.append(metric(x))
-
-        trG = pullback_metric(decoder, XY).sum(dim=(1, 2))
-        print(trG.shape)
-
-        # G = torch.stack(Gs, dim=0)
-        # trG = G[:, 0, 0] + G[:, 1, 1]
-
-
+        G = pullback_metric(decoder, XY)
+        trG = G[:, 0, 0] + G[:, 1, 1] # as solution for week1
 
         plt.imshow(
             trG.reshape(X.shape).detach().cpu().numpy().T,
             extent=(grid[0].item(), grid[-1].item(), grid[0].item(), grid[-1].item()),
             origin="lower"
         )
-        plt.colorbar()
-        plt.savefig('test.png')
-
-    from torch.func import vmap, jacfwd
-
-    def f_single(decoder, z):
-        return decoder.mean(z)
-
-    def plot_metric_fast(decoder, grid):
-        X, Y = torch.meshgrid(grid, grid, indexing="ij")
-        Z = torch.stack([X.reshape(-1), Y.reshape(-1)], dim=1)  # (P, 2)
-
-        # single-point decoder map: R^2 -> R^784
-        def f_single(z):
-            return decoder.mean(z)  # shape (784,)
-
-        # batched Jacobian: (P, 784, 2)
-        J = vmap(jacfwd(f_single))(Z)
-
-        # tr(J^T J) = sum of squares of Jacobian entries
-        trG = (J ** 2).sum(dim=(1, 2))  # (P,)
-
-        plt.imshow(
-            trG.reshape(X.shape).detach().cpu().numpy().T,
-            extent=(grid[0].item(), grid[-1].item(), grid[0].item(), grid[-1].item()),
-            origin="lower",
-        )
-        plt.colorbar()
+        plt.colorbar(label="tr(G(z))")
+        #plt.savefig('test.png')
 
     def curve_energy(metric, curve):
         G = metric(curve[:-1])  # (N-1)xDxD
@@ -494,7 +450,6 @@ if __name__ == "__main__":
         tmp = torch.bmm(G, delta.unsqueeze(-1)).squeeze(-1)  # (N-1)xD
         energy = torch.sum(delta * tmp)
         return energy
-
 
     def connecting_geodesic(metric, curve):
         opt = optim.LBFGS([curve.params], lr=0.5)
@@ -509,7 +464,6 @@ if __name__ == "__main__":
         for _ in range(max_iter):
             opt.zero_grad()
             opt.step(closure)
-
 
 
     # Choose mode to run
@@ -582,21 +536,12 @@ if __name__ == "__main__":
             GaussianDecoder(new_decoder()),
             GaussianEncoder(new_encoder()),
         ).to(device)
-        model.load_state_dict(torch.load(args.experiment_folder + "/model.pt"))
+        model.load_state_dict(torch.load(args.experiment_folder + "/modelA_100.pt"))
         model.eval()
-        z = torch.tensor([0.0, 0.0], device=device)
-        out = model.decoder.mean(z)
-        print(out.shape) # should be torch.Size([784])
-        J = torch.autograd.functional.jacobian(model.decoder.mean, z)
-        print(J.shape) # should be torch.Size([784, 2])
-
 
         r=10
         N = 100
-        #plot_metric(G, torch.linspace(-r, r, 20, device=device))
         plot_metric(model.decoder, torch.linspace(-r, r, 100, device=device))
-        #plot_metric_fast(model.decoder, torch.linspace(-r, r, 100))
-        # test encoder mean
         all_z = []
         all_y = []
 
@@ -608,8 +553,16 @@ if __name__ == "__main__":
 
         z = torch.cat(all_z, dim=0)          # (N, 2)
         labels = torch.cat(all_y, dim=0)  # (N,)
-        #plt.scatter(z[:, 0], z[:, 1], s=1, c=labels)
-        plt.scatter(z[:, 0], z[:, 1], s=1) # without labels - better?
+        #plt.scatter(z[:, 0], z[:, 1], s=1, c=labels, label)
+        #plt.scatter(z[:, 0], z[:, 1], s=1) # without labels - better?
+        for i in torch.unique(labels):
+            mask = labels == i
+            plt.scatter(
+                z[mask, 0],
+                z[mask, 1],
+                s=2,
+                label=f"Class {int(i)}"
+            )
 
         ## HERE
         G = lambda x: pullback_metric(model.decoder,x)
@@ -617,7 +570,7 @@ if __name__ == "__main__":
 
         all_idx = []
   
-        for _ in range(1):
+        for _ in range(25):
             idx = torch.randint(z.shape[0], (2,))
             all_idx.append(idx)
             c = PLcurve(z[idx[0]], z[idx[1]], T)
@@ -628,7 +581,7 @@ if __name__ == "__main__":
             
             e1 = curve_energy(G, c.points()).item()
             print(f"Energy after optimization is {e1:.2f}")
-            c.plot('After')
+            c.plot()
             print(f"drop: {(e0-e1)/max(e0,1e-12):.2%}")
             line = torch.linspace(0, 1, T).unsqueeze(1) * c.x1 + (1-torch.linspace(0,1,T).unsqueeze(1)) * c.x0
             dev = torch.norm(c.points().detach().cpu() - line.detach().cpu(), dim=1).max().item()
@@ -638,4 +591,8 @@ if __name__ == "__main__":
         pd.DataFrame(all_idx).to_csv('all_idx.csv', header=False)
 
         plt.axis((-r, r, -r, r))
+        plt.title('Latent Space: Pull-back Metric and Geodesics')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig('results/latent_plot.png')
         plt.show()
