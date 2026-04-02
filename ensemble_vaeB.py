@@ -282,11 +282,11 @@ def plot_metric(decoders, grid):
 def curve_energy(decoders, curve, monte_runs=20):
     num_decoder = len(decoders)
     energy = 0.0
-
+    curve = curve.points()
     for i in range(curve.N - 1):
-        zi = curve.points()[i:i+1]
-        zj = curve.points()[i+1:i+2]
-        sum = 0.0
+        zi = curve[i:i+1]
+        zj = curve[i+1:i+2]
+        acc = 0.0
         for _ in range(monte_runs):
             l = torch.randint(0, num_decoder, (1,)).item()
             k = torch.randint(0, num_decoder, (1,)).item()
@@ -294,8 +294,8 @@ def curve_energy(decoders, curve, monte_runs=20):
             fl = decoders[l].mean(zi)
             fk = decoders[k].mean(zj)
 
-            sum += torch.sum((fl - fk)**2)
-        energy += sum/monte_runs
+            acc += torch.sum((fl - fk)**2)
+        energy += acc/monte_runs
     return energy
 
 def connecting_geodesic(decoders, curve, steps=200, lr=1e-2):
