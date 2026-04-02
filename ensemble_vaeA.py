@@ -545,7 +545,7 @@ if __name__ == "__main__":
         all_z = []
         all_y = []
 
-        for x, y in mnist_train_loader:
+        for x, y in mnist_test_loader:
             x = x.to(device)
             z = model.encoder.mean(x) # torch.Size([32, 2])
             all_z.append(z.detach().cpu())
